@@ -1,17 +1,25 @@
 package ca.concordia.jdeodorant.eclipse.commandline.cloneinfowriter;
 
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.nio.file.OpenOption;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 import org.eclipse.jdt.core.dom.ASTNode;
 import org.eclipse.jface.viewers.StyledString;
@@ -45,7 +53,9 @@ public class CloneInfoHTMLWriter extends CloneInfoWriter {
 	
 	private final static String START_OF_REPEATING_PART = "<!-- {@START} -->";
 	private final static String END_OF_REPEATING_PART = "<!-- {@END} -->";
-	private final static String TEMPLATE_PATH = Activator.getPluginPath() + "/res/";
+	private final static String TEMPLATE_PATH_SUFFIX = "res/";
+	private final static String TEMPLATE_PATH_PREFIX = Activator.getPluginPath();
+	private final static String TEMPLATE_PATH = TEMPLATE_PATH_PREFIX + "/" + TEMPLATE_PATH_SUFFIX;
 	private final static String TEMPLATE_NAME = "template.htm";
 	private final static String TEMPLATE_EXTRA_FILES_FOLDER = "template.files";
 	private final String templateText;
@@ -154,6 +164,18 @@ public class CloneInfoHTMLWriter extends CloneInfoWriter {
 	private static String escapeHTML(String html) {
 		return html.replace("<", "&lt;").replace(">", "&gt;");
 	}
+	
+	private static byte[]
+	loadJarEntry(JarFile jarfile, JarEntry je) throws IOException {
+		final InputStream istream = jarfile.getInputStream(je);
+		ByteArrayOutputStream full_buffer = new ByteArrayOutputStream();
+		byte[] buf = new byte[4096];
+		int read_count;
+		while ((read_count = istream.read(buf, 0, buf.length)) != -1) {
+			full_buffer.write(buf, 0, read_count);
+		}
+		return full_buffer.toByteArray();
+	}
 
 	/**
 	 * Copy template extra files to the output folder
@@ -166,12 +188,45 @@ public class CloneInfoHTMLWriter extends CloneInfoWriter {
 			
 			extraFilesTargetFolder.mkdir();
 			
-			File[] list = new File(TEMPLATE_PATH + TEMPLATE_EXTRA_FILES_FOLDER).listFiles();
-			for (File fileInside : list) {
-				try {
-					Files.copy(fileInside.getAbsoluteFile().toPath(), Paths.get(extraFilesFolderPath + fileInside.getName()), StandardCopyOption.REPLACE_EXISTING);
+			if (TEMPLATE_PATH_PREFIX.endsWith(".jar")) { // process as jar file?
+				try (final JarFile jarfile = new JarFile(TEMPLATE_PATH_PREFIX)) {
+					Enumeration<JarEntry> i = jarfile.entries();
+					boolean copied_some_files = false;
+					final String CONTENT_PREFIX = TEMPLATE_PATH_SUFFIX + TEMPLATE_EXTRA_FILES_FOLDER;
+				
+					while (i.hasMoreElements()) {
+						JarEntry je = i.nextElement();
+						if (je.getName().startsWith(CONTENT_PREFIX)) {
+							try {
+								copied_some_files = true;
+								Files.write(Paths.get(extraFilesFolderPath + je.getName().substring(CONTENT_PREFIX.length())),
+										loadJarEntry(jarfile, je),
+										StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.CREATE);
+							} catch (IOException exn) {
+								exn.printStackTrace();
+							}
+						}
+					}
+					if (!copied_some_files) {
+						throw new RuntimeException("In " + TEMPLATE_PATH_PREFIX + ": found no template files in " + CONTENT_PREFIX);
+					}
 				} catch (IOException e) {
-					e.printStackTrace();
+					System.err.println("Our very own plugin file should be openable, so that we can extract various resources.");
+					throw new RuntimeException(e);
+				}
+			} else {
+				// [creichen] Tsantalis' original code, which I couldn't get to work for my setup on Linux (hence the jar-based code above)
+				final String pathname = TEMPLATE_PATH + TEMPLATE_EXTRA_FILES_FOLDER;
+				File[] list = new File(pathname).listFiles();
+				if (list == null) {
+					throw new RuntimeException("Can't write files: directory \"" + pathname + "\" from TEMPLATE_PATH=\"" + TEMPLATE_PATH + "\" contains no input files or doesn't exist or has no 'template extra files' or something (I don't fully understand the logic behind what is happening here)");
+				}
+				for (File fileInside : list) {
+					try {
+						Files.copy(fileInside.getAbsoluteFile().toPath(), Paths.get(extraFilesFolderPath + fileInside.getName()), StandardCopyOption.REPLACE_EXISTING);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
 				}
 			}
 		//}
@@ -608,7 +663,18 @@ public class CloneInfoHTMLWriter extends CloneInfoWriter {
 	
 	private String readFile(String path, Charset encoding) throws IOException 
 	{
-		byte[] encoded = Files.readAllBytes(Paths.get(path));
+		byte[] encoded;
+
+		if (path.startsWith(TEMPLATE_PATH_PREFIX + "/")) {
+			// have to extract from jar file
+			final String entryname = path.substring(TEMPLATE_PATH_PREFIX.length() + 1);
+			try (final JarFile jarfile = new JarFile(TEMPLATE_PATH_PREFIX)) {
+				final JarEntry je = (JarEntry) jarfile.getEntry(entryname);
+				encoded = loadJarEntry(jarfile, je);
+			}
+		} else {
+			encoded = Files.readAllBytes(Paths.get(path));
+		}
 		return new String(encoded, encoding);
 	}
 
@@ -616,7 +682,5 @@ public class CloneInfoHTMLWriter extends CloneInfoWriter {
 	public void closeMedia(boolean append) {
 		// Dummy
 	}
-
-	
 	
 }

@@ -169,6 +169,9 @@ public class Application implements IApplication {
 				}
 				
 				if (jProject == null) {
+					System.err.println("possible WS path 1: " + System.getProperty("user.dir"));
+					System.err.println("possible WS path 2: " + new File(".").getAbsolutePath());
+					System.err.println("possible WS path 3: " + ResourcesPlugin.getWorkspace().getRoot().getLocation().toString());
 					throw new RuntimeException("The project \"" + projectName + "\" is not opened in the workspace. Cannot continue.");
 				}
 				// If the application mode is not ApplicationMode.PARSE, we have to parse the project and make AST, otherwise, we don't need it. 
